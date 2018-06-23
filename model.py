@@ -2,12 +2,18 @@
 
 import pickle
 from keras.models import Model
-from keras.layers import Input, TimeDistributed, Dense, Lambda, concatenate, Dropout, BatchNormalization,LSTM,Conv1D
+from keras.layers import Input, merge, Dense, Lambda, concatenate, Dropout, BatchNormalization,LSTM,Conv1D
 from keras.layers.embeddings import Embedding
 from keras import backend as K
+from sklearn.metrics import confusion_matrix, f1_score
 
 
-def max_embedding():
+def get_f1(y_true, y_pred):
+    return  f1_score(y_true, y_pred)
+
+
+
+def cnn_lstm_f1():
     with open('vocab.data', 'rb') as fin:
         vocab = pickle.load(fin)
 
@@ -57,15 +63,7 @@ def max_embedding():
     merged = Dense(200, activation='relu')(merged)
     merged = Dropout(0)(merged)
     merged = BatchNormalization()(merged)
-    merged = Dense(200, activation='relu')(merged)
-    merged = Dropout(0)(merged)
-    merged = BatchNormalization()(merged)
-    merged = Dense(200, activation='relu')(merged)
-    merged = Dropout(0)(merged)
-    merged = BatchNormalization()(merged)
-    merged = Dense(200, activation='relu')(merged)
-    merged = Dropout(0)(merged)
-    merged = BatchNormalization()(merged)
+
 
     is_duplicate = Dense(1, activation='sigmoid')(merged)
 
@@ -73,8 +71,7 @@ def max_embedding():
     model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
     return model
 
-
-def rnn_model():
+def attention_lstm():
     with open('vocab.data', 'rb') as fin:
         vocab = pickle.load(fin)
 
@@ -86,27 +83,34 @@ def rnn_model():
                    weights=[vocab.embedding],
                    input_length=15,
                    trainable=False)(question1)
-    q1 = TimeDistributed(Dense(300, activation='relu'))(q1)
-    q1 = Lambda(lambda x: K.max(x, axis=1), output_shape=(300,))(q1)
 
     q2 = Embedding(vocab.nb_words + 1,
                    300,
                    weights=[vocab.embedding],
                    input_length=15,
                    trainable=False)(question2)
-    q2 = TimeDistributed(Dense(300, activation='relu'))(q2)
-    q2 = Lambda(lambda x: K.max(x, axis=1), output_shape=(300,))(q2)
 
-    merged = concatenate([q1, q2])
-    merged = Dense(200, activation='relu')(merged)
-    merged = Dropout(0)(merged)
-    merged = BatchNormalization()(merged)
-    merged = Dense(200, activation='relu')(merged)
-    merged = Dropout(0)(merged)
-    merged = BatchNormalization()(merged)
-    merged = Dense(200, activation='relu')(merged)
-    merged = Dropout(0)(merged)
-    merged = BatchNormalization()(merged)
+    f_rnn = LSTM(141, return_sequences=True, implementation=1)
+    b_rnn = LSTM(141, return_sequences=True, implementation=1, go_backwards=True)
+
+    maxpool = Lambda(lambda x: K.max(x, axis=1, keepdims=False), output_shape=lambda x: (x[0], x[2]))
+    maxpool.supports_masking = True
+
+    qf_rnn = f_rnn(q1)
+    qb_rnn = b_rnn(q1)
+    # q1_rnn = merge([qf_rnn, qb_rnn], mode='concat', concat_axis=-1)
+    q1_rnn =  merge([maxpool(qf_rnn), maxpool(qb_rnn)], mode='concat', concat_axis=-1)
+
+    from attention_lstm import AttentionLSTMWrapper
+    f_rnn = AttentionLSTMWrapper(f_rnn, q1_rnn, single_attention_param=True)
+    b_rnn = AttentionLSTMWrapper(b_rnn, q1_rnn, single_attention_param=True)
+
+    af_rnn = f_rnn(q2)
+    ab_rnn = b_rnn(q2)
+    # q2_rnn = merge([af_rnn, ab_rnn], mode='concat', concat_axis=-1)
+    q2_rnn =  merge([maxpool(af_rnn), maxpool(ab_rnn)], mode='concat', concat_axis=-1)
+
+    merged = concatenate([q1_rnn, q2_rnn])
     merged = Dense(200, activation='relu')(merged)
     merged = Dropout(0)(merged)
     merged = BatchNormalization()(merged)
