@@ -2,7 +2,7 @@
 
 import pickle
 from keras.models import Model
-from keras.layers import Input, merge, Dense, Lambda, concatenate, Dropout, BatchNormalization,LSTM,Conv1D
+from keras.layers import Input, merge, Dense, Lambda, concatenate, Dropout, BatchNormalization,LSTM,Conv1D, Add
 from keras.layers.embeddings import Embedding
 from keras import backend as K
 from sklearn.metrics import confusion_matrix, f1_score
@@ -90,8 +90,8 @@ def attention_lstm():
                    input_length=15,
                    trainable=False)(question2)
 
-    f_rnn = LSTM(141, return_sequences=True, implementation=1)
-    b_rnn = LSTM(141, return_sequences=True, implementation=1, go_backwards=True)
+    f_rnn = LSTM(256, return_sequences=True, consume_less='mem')
+    b_rnn = LSTM(256, return_sequences=True, consume_less='mem', go_backwards=True)
 
     maxpool = Lambda(lambda x: K.max(x, axis=1, keepdims=False), output_shape=lambda x: (x[0], x[2]))
     maxpool.supports_masking = True
@@ -101,16 +101,20 @@ def attention_lstm():
     # q1_rnn = merge([qf_rnn, qb_rnn], mode='concat', concat_axis=-1)
     q1_rnn =  merge([maxpool(qf_rnn), maxpool(qb_rnn)], mode='concat', concat_axis=-1)
 
-    from attention_lstm import AttentionLSTMWrapper
-    f_rnn = AttentionLSTMWrapper(f_rnn, q1_rnn, single_attention_param=True)
-    b_rnn = AttentionLSTMWrapper(b_rnn, q1_rnn, single_attention_param=True)
 
     af_rnn = f_rnn(q2)
     ab_rnn = b_rnn(q2)
     # q2_rnn = merge([af_rnn, ab_rnn], mode='concat', concat_axis=-1)
     q2_rnn =  merge([maxpool(af_rnn), maxpool(ab_rnn)], mode='concat', concat_axis=-1)
 
-    merged = concatenate([q1_rnn, q2_rnn])
+    from attention_lstm import Attention
+    attention = Attention(8,64)
+    q1_att = attention([q1_rnn, q1_rnn, q1_rnn])
+
+    q2_att = attention([q2_rnn, q2_rnn, q2_rnn])
+
+
+    merged = concatenate([q1_att, q2_att])
     merged = Dense(200, activation='relu')(merged)
     merged = Dropout(0)(merged)
     merged = BatchNormalization()(merged)

@@ -1,69 +1,110 @@
 from __future__ import absolute_import
 
-from keras import backend as K
 from keras.engine import InputSpec
 from keras.layers import LSTM, activations, Wrapper
 
+from keras import backend as K
+from keras.engine.topology import Layer
 
-class AttentionLSTM(LSTM):
-    def __init__(self, output_dim, attention_vec, attn_activation='tanh', single_attention_param=False, **kwargs):
-        self.attention_vec = attention_vec
-        self.attn_activation = activations.get(attn_activation)
-        self.single_attention_param = single_attention_param
 
-        super(AttentionLSTM, self).__init__(output_dim, **kwargs)
+class Position_Embedding(Layer):
+    def __init__(self, size=None, mode='sum', **kwargs):
+        self.size = size  # 必须为偶数
+        self.mode = mode
+        super(Position_Embedding, self).__init__(**kwargs)
+
+    def call(self, x):
+        if (self.size == None) or (self.mode == 'sum'):
+            self.size = int(x.shape[-1])
+        batch_size, seq_len = K.shape(x)[0], K.shape(x)[1]
+        position_j = 1. / K.pow(10000., 2 * K.arange(self.size / 2, dtype='float32' ) / self.size)
+        position_j = K.expand_dims(position_j, 0)
+        position_i = K.cumsum(K.ones_like(x[:, :, 0]), 1) - 1  # K.arange不支持变长，只好用这种方法生成
+        position_i = K.expand_dims(position_i, 2)
+        position_ij = K.dot(position_i, position_j)
+        position_ij = K.concatenate([K.cos(position_ij), K.sin(position_ij)], 2)
+        if self.mode == 'sum':
+            return position_ij + x
+        elif self.mode == 'concat':
+            return K.concatenate([position_ij, x], 2)
+
+    def compute_output_shape(self, input_shape):
+        if self.mode == 'sum':
+            return input_shape
+        elif self.mode == 'concat':
+            return (input_shape[0], input_shape[1], input_shape[2] + self.size)
+
+
+class Attention(Layer):
+    def __init__(self, nb_head, size_per_head, **kwargs):
+        self.nb_head = nb_head
+        self.size_per_head = size_per_head
+        self.output_dim = nb_head * size_per_head
+        super(Attention, self).__init__(**kwargs)
 
     def build(self, input_shape):
-        super(AttentionLSTM, self).build(input_shape)
+        self.WQ = self.add_weight(name='WQ',
+                                  shape=(input_shape[0][-1], self.output_dim),
+                                  initializer='glorot_uniform',
+                                  trainable=True)
+        self.WK = self.add_weight(name='WK',
+                                  shape=(input_shape[1][-1], self.output_dim),
+                                  initializer='glorot_uniform',
+                                  trainable=True)
+        self.WV = self.add_weight(name='WV',
+                                  shape=(input_shape[2][-1], self.output_dim),
+                                  initializer='glorot_uniform',
+                                  trainable=True)
+        super(Attention, self).build(input_shape)
 
-        if hasattr(self.attention_vec, '_keras_shape'):
-            attention_dim = self.attention_vec._keras_shape[1]
+    def Mask(self, inputs, seq_len, mode='mul'):
+        if seq_len == None:
+            return inputs
         else:
-            raise Exception('Layer could not be build: No information about expected input shape.')
+            mask = K.one_hot(seq_len[:, 0], K.shape(inputs)[1])
+            mask = 1 - K.cumsum(mask, 1)
+            for _ in range(len(inputs.shape) - 2):
+                mask = K.expand_dims(mask, 2)
+            if mode == 'mul':
+                return inputs * mask
+            if mode == 'add':
+                return inputs - (1 - mask) * 1e12
 
-        self.U_a = self.recurrent_initializer((self.output_dim, self.output_dim),
-                                   name='{}_U_a'.format(self.name))
-        self.b_a = K.zeros((self.output_dim,), name='{}_b_a'.format(self.name))
+    def call(self, x):
+        # 如果只传入Q_seq,K_seq,V_seq，那么就不做Mask
+        # 如果同时传入Q_seq,K_seq,V_seq,Q_len,V_len，那么对多余部分做Mask
+        if len(x) == 3:
+            Q_seq, K_seq, V_seq = x
+            Q_len, V_len = None, None
+        elif len(x) == 5:
+            Q_seq, K_seq, V_seq, Q_len, V_len = x
+        # 对Q、K、V做线性变换
+        Q_seq = K.dot(Q_seq, self.WQ)
+        Q_seq = K.reshape(Q_seq, (-1, K.shape(Q_seq)[1], self.nb_head, self.size_per_head))
+        Q_seq = K.permute_dimensions(Q_seq, (0, 2, 1, 3))
+        K_seq = K.dot(K_seq, self.WK)
+        K_seq = K.reshape(K_seq, (-1, K.shape(K_seq)[1], self.nb_head, self.size_per_head))
+        K_seq = K.permute_dimensions(K_seq, (0, 2, 1, 3))
+        V_seq = K.dot(V_seq, self.WV)
+        V_seq = K.reshape(V_seq, (-1, K.shape(V_seq)[1], self.nb_head, self.size_per_head))
+        V_seq = K.permute_dimensions(V_seq, (0, 2, 1, 3))
+        # 计算内积，然后mask，然后softmax
+        A = K.batch_dot(Q_seq, K_seq, axes=[3, 3]) / self.size_per_head ** 0.5
+        A = K.permute_dimensions(A, (0, 3, 2, 1))
+        A = self.Mask(A, V_len, 'add')
+        A = K.permute_dimensions(A, (0, 3, 2, 1))
+        A = K.softmax(A)
+        # 输出并mask
+        O_seq = K.batch_dot(A, V_seq, axes=[3, 2])
+        O_seq = K.permute_dimensions(O_seq, (0, 2, 1, 3))
+        O_seq = K.reshape(O_seq, (-1, K.shape(O_seq)[1], self.output_dim))
+        O_seq = self.Mask(O_seq, Q_len, 'mul')
+        return O_seq
 
-        self.U_m = self.recurrent_initializer((attention_dim, self.output_dim),
-                                   name='{}_U_m'.format(self.name))
-        self.b_m = K.zeros((self.output_dim,), name='{}_b_m'.format(self.name))
+    def compute_output_shape(self, input_shape):
+        return (input_shape[0][0], input_shape[0][1], self.output_dim)
 
-        if self.single_attention_param:
-            self.U_s = self.recurrent_initializer((self.output_dim, 1),
-                                       name='{}_U_s'.format(self.name))
-            self.b_s = K.zeros((1,), name='{}_b_s'.format(self.name))
-        else:
-            self.U_s = self.recurrent_initializer((self.output_dim, self.output_dim),
-                                       name='{}_U_s'.format(self.name))
-            self.b_s = K.zeros((self.output_dim,), name='{}_b_s'.format(self.name))
 
-        self.trainable_weights += [self.U_a, self.U_m, self.U_s, self.b_a, self.b_m, self.b_s]
-
-        if self.initial_weights is not None:
-            self.set_weights(self.initial_weights)
-            del self.initial_weights
-
-    def step(self, x, states):
-        h, [h, c] = super(AttentionLSTM, self).step(x, states)
-        attention = states[4]
-
-        m = self.attn_activation(K.dot(h, self.U_a) * attention + self.b_a)
-        # Intuitively it makes more sense to use a sigmoid (was getting some NaN problems
-        # which I think might have been caused by the exponential function -> gradients blow up)
-        s = K.sigmoid(K.dot(m, self.U_s) + self.b_s)
-
-        if self.single_attention_param:
-            h = h * K.repeat_elements(s, self.output_dim, axis=1)
-        else:
-            h = h * s
-
-        return h, [h, c]
-
-    def get_constants(self, x):
-        constants = super(AttentionLSTM, self).get_constants(x)
-        constants.append(K.dot(self.attention_vec, self.U_m) + self.b_m)
-        return constants
 
 
 class AttentionLSTMWrapper(Wrapper):
@@ -90,18 +131,18 @@ class AttentionLSTMWrapper(Wrapper):
         else:
             raise Exception('Layer could not be build: No information about expected input shape.')
 
-        self.U_a = self.layer.recurrent_initializer((self.layer.output_dim, self.layer.output_dim), name='{}_U_a'.format(self.name))
-        self.b_a = K.zeros((self.layer.output_dim,), name='{}_b_a'.format(self.name))
+        self.U_a = self.layer.recurrent_initializer((self.layer.output_dim, self.layer.output_dim))
+        self.b_a = K.zeros((self.layer.output_dim,))
 
-        self.U_m = self.layer.recurrent_initializer((attention_dim, self.layer.output_dim), name='{}_U_m'.format(self.name))
-        self.b_m = K.zeros((self.layer.output_dim,), name='{}_b_m'.format(self.name))
+        self.U_m = self.layer.recurrent_initializer((attention_dim, self.layer.output_dim))
+        self.b_m = K.zeros((self.layer.output_dim,))
 
         if self.single_attention_param:
-            self.U_s = self.layer.recurrent_initializer((self.layer.output_dim, 1), name='{}_U_s'.format(self.name))
-            self.b_s = K.zeros((1,), name='{}_b_s'.format(self.name))
+            self.U_s = self.layer.recurrent_initializer((self.layer.output_dim, 1))
+            self.b_s = K.zeros((1,))
         else:
-            self.U_s = self.layer.recurrent_initializer((self.layer.output_dim, self.layer.output_dim), name='{}_U_s'.format(self.name))
-            self.b_s = K.zeros((self.layer.output_dim,), name='{}_b_s'.format(self.name))
+            self.U_s = self.layer.recurrent_initializer((self.layer.output_dim, self.layer.output_dim))
+            self.b_s = K.zeros((self.layer.output_dim,))
 
         self.trainable_weights = [self.U_a, self.U_m, self.U_s, self.b_a, self.b_m, self.b_s]
 
@@ -168,3 +209,4 @@ class AttentionLSTMWrapper(Wrapper):
             return outputs
         else:
             return last_output
+
