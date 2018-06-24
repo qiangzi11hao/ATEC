@@ -21,20 +21,20 @@ class AttentionLSTM(LSTM):
         else:
             raise Exception('Layer could not be build: No information about expected input shape.')
 
-        self.U_a = self.inner_init((self.output_dim, self.output_dim),
+        self.U_a = self.recurrent_initializer((self.output_dim, self.output_dim),
                                    name='{}_U_a'.format(self.name))
         self.b_a = K.zeros((self.output_dim,), name='{}_b_a'.format(self.name))
 
-        self.U_m = self.inner_init((attention_dim, self.output_dim),
+        self.U_m = self.recurrent_initializer((attention_dim, self.output_dim),
                                    name='{}_U_m'.format(self.name))
         self.b_m = K.zeros((self.output_dim,), name='{}_b_m'.format(self.name))
 
         if self.single_attention_param:
-            self.U_s = self.inner_init((self.output_dim, 1),
+            self.U_s = self.recurrent_initializer((self.output_dim, 1),
                                        name='{}_U_s'.format(self.name))
             self.b_s = K.zeros((1,), name='{}_b_s'.format(self.name))
         else:
-            self.U_s = self.inner_init((self.output_dim, self.output_dim),
+            self.U_s = self.recurrent_initializer((self.output_dim, self.output_dim),
                                        name='{}_U_s'.format(self.name))
             self.b_s = K.zeros((self.output_dim,), name='{}_b_s'.format(self.name))
 
@@ -90,17 +90,17 @@ class AttentionLSTMWrapper(Wrapper):
         else:
             raise Exception('Layer could not be build: No information about expected input shape.')
 
-        self.U_a = self.layer.inner_init((self.layer.output_dim, self.layer.output_dim), name='{}_U_a'.format(self.name))
+        self.U_a = self.layer.recurrent_initializer((self.layer.output_dim, self.layer.output_dim), name='{}_U_a'.format(self.name))
         self.b_a = K.zeros((self.layer.output_dim,), name='{}_b_a'.format(self.name))
 
-        self.U_m = self.layer.inner_init((attention_dim, self.layer.output_dim), name='{}_U_m'.format(self.name))
+        self.U_m = self.layer.recurrent_initializer((attention_dim, self.layer.output_dim), name='{}_U_m'.format(self.name))
         self.b_m = K.zeros((self.layer.output_dim,), name='{}_b_m'.format(self.name))
 
         if self.single_attention_param:
-            self.U_s = self.layer.inner_init((self.layer.output_dim, 1), name='{}_U_s'.format(self.name))
+            self.U_s = self.layer.recurrent_initializer((self.layer.output_dim, 1), name='{}_U_s'.format(self.name))
             self.b_s = K.zeros((1,), name='{}_b_s'.format(self.name))
         else:
-            self.U_s = self.layer.inner_init((self.layer.output_dim, self.layer.output_dim), name='{}_U_s'.format(self.name))
+            self.U_s = self.layer.recurrent_initializer((self.layer.output_dim, self.layer.output_dim), name='{}_U_s'.format(self.name))
             self.b_s = K.zeros((self.layer.output_dim,), name='{}_b_s'.format(self.name))
 
         self.trainable_weights = [self.U_a, self.U_m, self.U_s, self.b_a, self.b_m, self.b_s]
