@@ -9,7 +9,7 @@ from keras.callbacks import Callback, ModelCheckpoint
 from sklearn.model_selection import train_test_split
 import jieba
 from vocab import Vocab
-from model import max_embedding
+from model import attention_lstm, cnn_lstm_f1
 
 EMBEDDING_PATH = 'data/sgns.merge.word'
 MODEL_WEIGHTS_FILE = 'saved_models/question_pairs_weights.h5'
@@ -42,7 +42,7 @@ def train():
     q2_train = x_train[:, 1]
     q1_test = x_test[:, 0]
     q2_test = x_test[:, 1]
-    model = max_embedding()
+    model = attention_lstm()
 
     print(model.summary())
     print("Starting training at", datetime.datetime.now())
@@ -77,7 +77,7 @@ def train():
 
 def final_predict(inpath, outpath):
     # predict function
-    model = max_embedding()
+    model = attention_lstm()
     model.load_weights('saved_models/question_pairs_weights.h5')
     with open('vocab.data', 'rb') as fin:
         vocab = pickle.load(fin)

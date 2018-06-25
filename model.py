@@ -99,22 +99,24 @@ def attention_lstm():
     qf_rnn = f_rnn(q1)
     qb_rnn = b_rnn(q1)
     # q1_rnn = merge([qf_rnn, qb_rnn], mode='concat', concat_axis=-1)
-    q1_rnn =  merge([maxpool(qf_rnn), maxpool(qb_rnn)], mode='concat', concat_axis=-1)
+    q1_rnn =  concatenate([qf_rnn, qb_rnn], axis=-1)
 
 
     af_rnn = f_rnn(q2)
     ab_rnn = b_rnn(q2)
     # q2_rnn = merge([af_rnn, ab_rnn], mode='concat', concat_axis=-1)
-    q2_rnn =  merge([maxpool(af_rnn), maxpool(ab_rnn)], mode='concat', concat_axis=-1)
+    q2_rnn =  concatenate([af_rnn, ab_rnn], axis=-1)
+
 
     from attention_lstm import Attention
     attention = Attention(8,64)
-    q1_att = attention([q1_rnn, q1_rnn, q1_rnn])
+    q1_att = maxpool(attention([q1_rnn, q1_rnn, q1_rnn]))
+    q1 = Dense(200, activation='relu')(q1_att)
 
-    q2_att = attention([q2_rnn, q2_rnn, q2_rnn])
+    q2_att = maxpool(attention([q2_rnn, q2_rnn, q2_rnn]))
+    q2 = Dense(200, activation='relu')(q2_att)
 
-
-    merged = concatenate([q1_att, q2_att])
+    merged = concatenate([q1, q2])
     merged = Dense(200, activation='relu')(merged)
     merged = Dropout(0)(merged)
     merged = BatchNormalization()(merged)
