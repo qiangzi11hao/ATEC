@@ -42,7 +42,7 @@ def train():
     q2_train = x_train[:, 1]
     q1_test = x_test[:, 0]
     q2_test = x_test[:, 1]
-    model = attention_lstm()
+    model = cnn_lstm_f1()
 
     print(model.summary())
     print("Starting training at", datetime.datetime.now())

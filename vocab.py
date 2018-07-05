@@ -14,8 +14,8 @@ HUA_BEI = set([u'花贝', u'花吧', u'花臂', u'发倍', u'好呗', u'花被',
 JIE_BEI = set([u'借吧', u'借贝', u'戒备', u'接呗', u'借本'])
 WANG_SHANG_DAI = set([u'网上贷'])
 
-MAX_SEQUENCE_LENGTH = 15
-BALANCED = 'add'
+MAX_SEQUENCE_LENGTH = 20
+BALANCED = 'delete'
 
 jieba.load_userdict('data/user_dict.txt')
 
