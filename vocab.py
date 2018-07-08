@@ -15,20 +15,24 @@ JIE_BEI = set([u'借吧', u'借贝', u'戒备', u'接呗', u'借本'])
 WANG_SHANG_DAI = set([u'网上贷'])
 
 MAX_SEQUENCE_LENGTH = 20
-BALANCED = 'delete'
+BALANCED = None
 
 jieba.load_userdict('data/user_dict.txt')
 
 
 class Vocab(object):
     def __init__(self, file, simplified=True, correct=True):
-        _, _, _, self.q1_word, self.q2_word, self.label = self.get_data(file, simplified, correct, BALANCED)
+        _, self.q1_char, self.q2_char, self.q1_word, self.q2_word, self.coll, self.label = self.get_data(file, simplified, correct, BALANCED)
         self.q_word = self.q1_word + self.q2_word
         # self.analyze(self.q1_word, self.q2_word)
         self.embedding = 0
+        self.embedding_c = {}
         self.word_index = {}
+        self.char_index = {}
+        self.nb_chars = 0
         self.nb_words = 0
-        self.tokenizer = 'add'
+        self.tokenizer_word = 'add'
+        self.tokenizer_char = None
 
     def get_data(self, file, simplified=True, corrected=True, balanced=None):
         df = pd.read_csv(file, header=None, sep='\t')
@@ -56,13 +60,24 @@ class Vocab(object):
             q2 = list(map(self.correction, q2))
         q1_word = map(list, map(jieba.cut, q1))
         q2_word = map(list, map(jieba.cut, q2))
+        q1_char = map(list, q1)
+        q2_char = map(list, q2)
 
         def join_(l):
             return ' '.join(l).encode("utf-8").strip()
 
+        def collocate(q1, q2):
+            common_words = []
+            for q1_w, q2_w in zip(q1, q2):
+                ret = [single_word for single_word in q1_w if single_word in q2_w]
+                common_words.append(ret)
+            return  common_words
+
+        coll = collocate(q1_word, q2_word)
         q1_word = map(join_, q1_word)
         q2_word = map(join_, q2_word)
-        return index, q1, q2, q1_word, q2_word, label
+        coll = map(join_, coll)
+        return index, q1_char, q2_char, q1_word, q2_word, coll, label
 
     def cht_to_chs(self, line):
         line = Converter('zh-hans').convert(line.decode("utf-8"))
@@ -81,13 +96,13 @@ class Vocab(object):
             q = q.replace(word, u'网商贷')
         return q
 
-    def load_embedding(self, path):
-        self.tokenizer = Tokenizer()
-        self.tokenizer.fit_on_texts(self.q_word)
-        self.word_index = self.tokenizer.word_index
+    def load_embedding_word(self, path):
+        self.tokenizer_word = Tokenizer()
+        self.tokenizer_word.fit_on_texts(self.q_word)
+        self.word_index = self.tokenizer_word.word_index
         print("Words in index: %d" % len(self.word_index))
         embeddings_index = {}
-        fin = io.open('data/sgns.merge.char', 'r', encoding='utf-8', newline='\n', errors='ignore')
+        fin = io.open(path, 'r', encoding='utf-8', newline='\n', errors='ignore')
         for i, line in enumerate(fin):
             if i == 1200000:
                 break
@@ -101,10 +116,35 @@ class Vocab(object):
                 self.embedding[i] = embedding_vector
         # print('Null word embeddings: %d' % np.sum(np.sum(self.embedding, axis=1) == 0))
 
-    def to_sequence(self, question, padding=True):
-        seq = self.tokenizer.texts_to_sequences(question)
+    def to_sequence_word(self, question, padding=True, max_len=MAX_SEQUENCE_LENGTH):
+        seq = self.tokenizer_word.texts_to_sequences(question)
         if padding:
-            seq = pad_sequences(seq, maxlen=MAX_SEQUENCE_LENGTH)
+            seq = pad_sequences(seq, maxlen=max_len)
+        return seq
+
+    def load_embedding_char(self, path):
+        self.tokenizer_char = Tokenizer()
+        self.tokenizer_char.fit_on_texts(self.q1_char+self.q2_char)
+        self.char_index = self.tokenizer_char.word_index
+        print("Chars in index: %d" % len(self.char_index))
+        embeddings_index = {}
+        fin = io.open(path, 'r', encoding='utf-8', newline='\n', errors='ignore')
+        for i, line in enumerate(fin):
+            if i == 1200000:
+                break
+            tokens = line.rstrip().split(' ')
+            embeddings_index[tokens[0]] = list(map(float, tokens[1:]))
+        self.nb_chars = len(self.char_index)
+        self.embedding_c = np.random.rand(self.nb_chars + 1, 300)
+        for word, i in self.char_index.items():
+            embedding_vector = embeddings_index.get(word.encode('utf-8'))
+            if embedding_vector is not None:
+                self.embedding_c[i] = embedding_vector
+
+    def to_sequence_char(self, question, padding=True, max_len=MAX_SEQUENCE_LENGTH):
+        seq = self.tokenizer_char.texts_to_sequences(question)
+        if padding:
+            seq = pad_sequences(seq, maxlen=max_len)
         return seq
 
     def analyze(self, q1, q2):
@@ -131,7 +171,7 @@ class Vocab(object):
 
 if __name__ == '__main__':
     vocab = Vocab('data/data_all.csv')
-    vocab.load_embedding('data/sgns.merge.word')
+    vocab.load_embedding_word('data/sgns.merge.word')
     label = vocab.label
     print(len(label), sum(label))
     # 18685 102477
